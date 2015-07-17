@@ -1,18 +1,25 @@
 import socket, sys
 import win32api, win32con, math
 
+(width, height) = win32api.GetMonitorInfo(win32api.MonitorFromPoint((0,0)))['Monitor'][2:4]
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-server_address = ('192.168.137.37', 8000)
+if (len(sys.argv) > 1):
+    ip = sys.argv[1]
+else:
+    ip = "152.14.143.204"
+server_address = (ip, 8000)
 sock.connect(server_address)
-sock.send(b"HandRight|Width|1920|Height|1080|HandLeft|Output|2|LeftState|RightState")
+
+#sock.send(b"HandRight|Width|65535|Height|65535|Output|0|LeftState|RightState")
+sock.send(b"HandRight|Width|" + str(width).encode() + b"|Height|" + str(height).encode() + b"|Output|2|HandLeft|LeftState|RightState")
 x = 0
 y = 0
 
 
 def moveTo(x,y):
-    #win32api.SetCursorPos((x,y)) 
-    win32api.mouse_event(win32con.MOUSEEVENTF_MOVE, x, y, 0,0)
+    win32api.mouse_event(win32con.MOUSEEVENTF_MOVE | win32con.MOUSEEVENTF_ABSOLUTE, x, y, 0,0)
+   # print((x,y))
 
 def mouseDown(x, y):
     win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN,x,y,0,0)
@@ -22,16 +29,15 @@ def mouseUp(x,y):
 
 def scroll(x,y,amount):
     win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL,x,y,amount,0)
-    print(amount)
+   # print(amount)
 
 def uncompressNumber(s):
-    #return (ord(s[0])-128)*255 + (ord(s[1])-128)
     return (ord(s[0])*255 + ord(s[1]))
 
 def uncompressVector(s):
     return (uncompressNumber(s[0:2]),uncompressNumber(s[2:4]))
 
-lastPosition = (0,0)
+lastPosition = win32api.GetCursorPos()
 newPosition = (0,0)
 lastY = 0
 newY = 0
@@ -41,72 +47,6 @@ click = False
 newScroll = False
 #scroll = False
 
-def unpack(s):
-    global newPosition
-    global newClick
-    global newY
-    global newScroll
-    res = {}
-    while (s != ""):
-        if (s[0] == '9' or s[0] == '8'):
-            newPosition = uncompressVector(s[1:5])
-            newClick = (s[0] == '9')
-            s = s[5:]
-        elif (s[0] == '5' or s[0] == '4'):
-            newY = uncompressVector(s[1:5])[1]
-            newScroll = (s[0] == '5')
-            s = s[5:]
-    return res
-
-lastPosition = (0,0)
-"""
-while(True):
-    data = b""
-    c = None
-    while c != b'\n':
-        c = sock.recv(1)
-        if c!=b'\n' : data += c
-    data = data.decode('ISO-8859-1')
-    data = unpack(data)
-    #print(data)
-    #print(newPosition)
-    moveTo(newPosition[0] - lastPosition[0], newPosition[1] - lastPosition[1])
-    if (newClick != click):
-        if (newClick):
-            mouseDown(0,0)
-            print("CLick")
-        else:
-            mouseUp(0,0)
-            print("No Click")
-        click = newClick
-    lastPosition = newPosition
-    
-    if (newScroll or changeY != 0):
-        if (newScroll):
-            scroll(0, 0, newY - lastY)
-            changeY = newY - lastY
-        else:
-            scroll(0, 0, changeY)
-            if (changeY > 0): changeY -= 1
-            else: changeY += 1
-
-    lastY = newY
-    if ('MousePosition' in data):
-        x = int(data['MousePosition'][0])
-        y = int(data['MousePosition'][1])
-        moveTo(x,y)
-
-    if ('MouseClick' in data):
-        mouseDown(x,y)
-        mouseUp(x,y)
-    else: 
-        if ('MouseDrag' in data):
-            if (data['MouseDrag']): mouseDown(x,y) 
-            else: mouseUp(x,y)
-
-    if ('Scroll' in data):
-        scroll(x,y,data['Scroll'])
-"""
 def readPython():
     data = b"";
     nBracket = None
@@ -136,11 +76,74 @@ def readStream():
     data['HandLeft'] = uncompressVector(recv[4:8])
     data['LeftState'] = (recv[8] == 'O')
     data['RightState'] = (recv[9] == 'O')
-    return data
+    fullData = {}
+    fullData['Body 0'] = data
+    return fullData
 
 def readCompressedData():
-    ""
+    char = None
+    bodyID = None
+    data = {}
+    while (bodyID != b'\n'):
+        bodyID = sock.recv(1)
+        if (bodyID == b'\n'): break
+        bodyID = "Body " + bodyID.decode('ISO-8859-1')
+        if (bodyID not in data): data[bodyID] = {}
+        jointID = sock.recv(1)
+        jointID += sock.recv(1)
+        jointID = jointID.decode('ISO-8859-1')
+        if (jointID == "07"):
+            s = b""
+            for i in range(0,4):
+                s += sock.recv(1)
+            s = s.decode('ISO-8859-1')
+            data[bodyID]['HandLeft'] = uncompressVector(s)
+        elif (jointID == "11"):
+            s = b""
+            for i in range(0,4):
+                s += sock.recv(1)
+            s = s.decode('ISO-8859-1')
+            data[bodyID]['HandRight'] = uncompressVector(s)
+        elif (jointID == "HL"):
+            handOpen = sock.recv(1)
+            data[bodyID]['LeftState'] = (handOpen == b'O')
+        elif (jointID == "HR"):
+            handOpen = sock.recv(1)
+            data[bodyID]['RightState'] = (handOpen == b'O')
+    return data
 
 while (True):
-    print(readStream())
+    #data = readCompressedData()
+    data = readStream()
+
+    newPosition = data['Body 0']['HandRight']
+    newClick = not data['Body 0']['RightState']
+    newScroll = not data['Body 0']['LeftState']
+    newY = int(data['Body 0']['HandLeft'][1])
+    print(lastPosition, newPosition)
+    #moveTo(newPosition[0] - lastPosition[0], newPosition[1] - lastPosition[1])
+    x = int((newPosition[0]) * 65535.0 / width)
+    y = int((newPosition[1]) * 65535.0 / height)
+    moveTo(x,y)
+    if (newClick != click):
+        if (newClick):
+            mouseDown(0,0)
+            print("CLick")
+        else:
+            mouseUp(0,0)
+            print("No Click")
+        click = newClick
+    lastPosition = win32api.GetCursorPos()
+    """
+    if (newScroll or changeY != 0):
+        if (newScroll):
+            scroll(0, 0, newY - lastY)
+            changeY = newY - lastY
+        else:
+            scroll(0, 0, changeY)
+            if (changeY > 0): changeY -= 1
+            else: changeY += 1
+
+    lastY = newY
+    """
 
