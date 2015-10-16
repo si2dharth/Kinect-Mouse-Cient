@@ -7,7 +7,7 @@ sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 if (len(sys.argv) > 1):
     ip = sys.argv[1]
 else:
-    ip = "152.14.143.204"
+    ip = "10.139.59.61"
 server_address = (ip, 8000)
 sock.connect(server_address)
 
@@ -127,9 +127,10 @@ while (True):
     moveTo(x,y)
     if (newClick != click):
         if (newClick):
-            mouseDown(0,0)
+            #mouseDown(0,0)
             print("CLick")
         else:
+            mouseDown(0,0)
             mouseUp(0,0)
             print("No Click")
         click = newClick
